@@ -1,0 +1,62 @@
+#!/usr/bin/env ruby
+# Author:      junegunn.c@gmail.com
+# Requirement: Ruby 1.8.5 or above
+# Reference:   http://stackoverflow.com/questions/1420426/calculating-cpu-usage-of-a-process-in-linux
+
+def cputotal
+  File.readlines('/proc/stat').first.split[1..-1].inject(0) { |sum, e| sum + e.to_i }
+end
+
+def proctotal pid
+  File.read("/proc/#{pid}/stat").split.values_at(13, 14).inject(0) { |sum, e| sum + e.to_i }
+end
+
+by_pid =
+  if ARGV.delete('--pid')
+    def update
+      ARGV.inject({}) { |hash, pid|
+        hash[pid] = { pid => proctotal(pid) }
+        hash
+      }
+    end
+    true
+  else
+    def update
+      ARGV.inject({}) { |hash, name|
+        hash[name] ||= {}
+        `ps -C #{name} -o pid=`.chomp.split.each do |pid|
+          hash[name][pid] = proctotal pid
+        end
+        hash
+      }
+    end
+    false
+  end
+
+interval = ARGV.last.to_i > 0 ? ARGV.pop.to_i : 2
+
+procs = update
+if procs.empty?
+  puts "usage: #$0       NAMES... [INTERVAL=2]"
+  puts "       #$0 --pid PIDS...  [INTERVAL=2]"
+  exit 0
+end
+
+total = cputotal
+loop do
+  sleep interval
+  new_procs = update
+  diff      = cputotal - total
+  procs.each do |name, pids|
+    pids.each do |pid, jiff|
+      jdiff = new_procs[name][pid] - jiff
+      pct = 100.0 * jdiff / diff
+      tag = " (#{pid})" unless by_pid
+      puts "#{name}#{tag}: #{'%.1f' % pct}%"
+    end
+  end
+
+  total = cputotal
+  procs = update
+end
+
